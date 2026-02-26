@@ -45,6 +45,9 @@
     .depth-2 { padding-left: 48px; }
     .depth-3 { padding-left: 64px; }
     .depth-4 { padding-left: 80px; }
+    .depth-5 { padding-left: 96px; }
+    .tab-item { font-size: 12px; color: #b0b0d0; }
+    .tab-item .icon { font-size: 11px; color: #7070a0; }
     #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
     #content-frame { flex: 1; width: 100%; border: none; background: #fff; }
     #placeholder {
@@ -107,20 +110,32 @@
         children.style.maxHeight = children.scrollHeight + 'px';
       }
     }
+    var FILE_ICONS = { doc: '📄', sheet: '📊', slide: '📑', pdf: '📕' };
+    function selectFile(item, url) {
+      if (activeItem) activeItem.classList.remove('active');
+      item.classList.add('active'); activeItem = item;
+      var frame = document.getElementById('content-frame');
+      document.getElementById('placeholder').style.display = 'none';
+      frame.style.display = 'block'; frame.src = url;
+    }
     function renderFile(node, container, depth) {
+      var icon = FILE_ICONS[node.fileType] || '📄';
       var item = document.createElement('div');
       item.className = 'tree-item depth-' + depth;
       item.dataset.url = node.url;
       item.dataset.name = node.name;
-      item.innerHTML = '<span class="icon">📄</span><span class="label">' + escapeHtml(node.name) + '</span>';
-      item.addEventListener('click', function() {
-        if (activeItem) activeItem.classList.remove('active');
-        item.classList.add('active'); activeItem = item;
-        var frame = document.getElementById('content-frame');
-        document.getElementById('placeholder').style.display = 'none';
-        frame.style.display = 'block'; frame.src = node.url;
-      });
+      item.innerHTML = '<span class="icon">' + icon + '</span><span class="label">' + escapeHtml(node.name) + '</span>';
+      item.addEventListener('click', function() { selectFile(item, node.url); });
       container.appendChild(item);
+      if (node.tabs && node.tabs.length > 0) {
+        node.tabs.forEach(function(tab) {
+          var tabItem = document.createElement('div');
+          tabItem.className = 'tree-item tab-item depth-' + (depth + 1);
+          tabItem.innerHTML = '<span class="icon">↳</span><span class="label">' + escapeHtml(tab.title) + '</span>';
+          tabItem.addEventListener('click', function(e) { e.stopPropagation(); selectFile(tabItem, tab.url); });
+          container.appendChild(tabItem);
+        });
+      }
     }
     document.getElementById('search-input').addEventListener('input', function(e) {
       var q = e.target.value.toLowerCase().trim();
