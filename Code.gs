@@ -7,35 +7,6 @@
 //   3. デプロイ → ウェブアプリとしてデプロイ
 // ============================================================
 
-/**
- * Google Docs REST API でタブ一覧を取得する（内部関数）
- * @param {File} file - DriveApp.File オブジェクト
- * @param {string} previewUrl - ドキュメントのプレビューURL
- * @return {Array<Object>|null} タブ配列、またはタブが1つ以下なら null
- * @private
- */
-function getDocTabs_(file, previewUrl) {
-  try {
-    var token = ScriptApp.getOAuthToken();
-    var res = UrlFetchApp.fetch(
-      'https://docs.googleapis.com/v1/documents/' + encodeURIComponent(file.getId()) + '?fields=tabs.tabProperties',
-      { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
-    );
-    if (res.getResponseCode() !== 200) return null;
-    var tabs = JSON.parse(res.getContentText()).tabs || [];
-    if (tabs.length <= 1) return null;
-    return tabs.map(function(t) {
-      var props = t.tabProperties || {};
-      return {
-        title: props.title || 'タブ',
-        url: previewUrl + '?tab=t.' + props.tabId
-      };
-    });
-  } catch (e) {
-    return null;
-  }
-}
-
 /** @const {string} 対象フォルダのID（ここを書き換える） */
 const FOLDER_ID = 'ここにフォルダIDを入れる';
 
@@ -90,22 +61,18 @@ function buildTree_(folder) {
     while (files.hasNext()) {
       const file = files.next();
       const url = file.getUrl();
-      // PDFは /view → /preview、その他は /edit → /preview に変換
-      const previewUrl = entry.fileType === 'pdf'
+      // PDFは /view → /preview、Docsは /edit のまま、その他は /edit → /preview に変換
+      const viewUrl = entry.fileType === 'pdf'
         ? url.replace(/\/view.*$/, '/preview')
-        : url.replace(/\/edit.*$/, '/preview');
+        : entry.fileType === 'doc'
+          ? url.replace(/\/edit.*$/, '/edit')
+          : url.replace(/\/edit.*$/, '/preview');
       const node = {
         type: 'file',
         fileType: entry.fileType,
         name: file.getName(),
-        url: previewUrl
+        url: viewUrl
       };
-
-      // Googleドキュメントのタブを取得（複数タブがある場合のみ）
-      if (entry.fileType === 'doc') {
-        const tabs = getDocTabs_(file, previewUrl);
-        if (tabs) node.tabs = tabs;
-      }
 
       fileNodes.push(node);
     }
