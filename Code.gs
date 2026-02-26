@@ -19,32 +19,66 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+/** @const {number} フォルダの再帰上限（深さ制限） */
+const MAX_DEPTH = 10;
+
+/** @const {number} Drive APIリトライ回数上限 */
+const MAX_RETRIES = 3;
+
 /**
  * 指定フォルダ配下のGoogleドキュメントを再帰的に取得する
  * @return {Array<Object>} ツリー構造のファイル/フォルダ一覧
  */
 function getDocumentTree() {
   const rootFolder = DriveApp.getFolderById(FOLDER_ID);
-  return buildTree_(rootFolder);
+  return buildTree_(rootFolder, 0);
+}
+
+/**
+ * Drive API を呼び出すラッパー（エラー時にリトライ）
+ * @param {Function} fn - 実行する関数
+ * @return {*} 関数の戻り値
+ * @private
+ */
+function callDriveApi_(fn) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return fn();
+    } catch (e) {
+      if (attempt === MAX_RETRIES - 1) throw e;
+      // クォータ超過・サービスエラーの場合はウェイトしてリトライ
+      Utilities.sleep(Math.pow(2, attempt) * 1000);
+    }
+  }
 }
 
 /**
  * フォルダを再帰的に走査してツリー構造を構築する（内部関数）
  * @param {Folder} folder - 対象フォルダ
+ * @param {number} depth - 現在の深さ
  * @return {Array<Object>} ノード配列
  * @private
  */
-function buildTree_(folder) {
+function buildTree_(folder, depth) {
+  if (depth >= MAX_DEPTH) {
+    console.warn('最大深さ(%s)に達したためスキップ: %s', MAX_DEPTH, folder.getName());
+    return [];
+  }
+
   // サブフォルダを処理
   const folderNodes = [];
-  const subFolders = folder.getFolders();
+  const subFolders = callDriveApi_(function() { return folder.getFolders(); });
   while (subFolders.hasNext()) {
-    const sub = subFolders.next();
-    folderNodes.push({
-      type: 'folder',
-      name: sub.getName(),
-      children: buildTree_(sub)
-    });
+    const sub = callDriveApi_(function() { return subFolders.next(); });
+    try {
+      folderNodes.push({
+        type: 'folder',
+        name: sub.getName(),
+        children: buildTree_(sub, depth + 1)
+      });
+    } catch (e) {
+      console.error('フォルダ処理エラー: %s', e.message);
+    }
   }
 
   // 対応するファイル種別
@@ -57,24 +91,33 @@ function buildTree_(folder) {
 
   const fileNodes = [];
   mimeTypes.forEach(function(entry) {
-    const files = folder.getFilesByType(entry.mime);
+    let files;
+    try {
+      files = callDriveApi_(function() { return folder.getFilesByType(entry.mime); });
+    } catch (e) {
+      console.error('ファイル一覧取得エラー (%s): %s', entry.fileType, e.message);
+      return;
+    }
     while (files.hasNext()) {
-      const file = files.next();
-      const url = file.getUrl();
-      // PDFは /view → /preview、Docsは /edit のまま、その他は /edit → /preview に変換
-      const viewUrl = entry.fileType === 'pdf'
-        ? url.replace(/\/view.*$/, '/preview')
-        : entry.fileType === 'doc'
-          ? url.replace(/\/edit.*$/, '/edit')
-          : url.replace(/\/edit.*$/, '/preview');
-      const node = {
-        type: 'file',
-        fileType: entry.fileType,
-        name: file.getName(),
-        url: viewUrl
-      };
-
-      fileNodes.push(node);
+      let file;
+      try {
+        file = callDriveApi_(function() { return files.next(); });
+        const url = file.getUrl();
+        // PDFは /view → /preview、Docsは /edit のまま、その他は /edit → /preview に変換
+        const viewUrl = entry.fileType === 'pdf'
+          ? url.replace(/\/view.*$/, '/preview')
+          : entry.fileType === 'doc'
+            ? url.replace(/\/edit.*$/, '/edit')
+            : url.replace(/\/edit.*$/, '/preview');
+        fileNodes.push({
+          type: 'file',
+          fileType: entry.fileType,
+          name: file.getName(),
+          url: viewUrl
+        });
+      } catch (e) {
+        console.error('ファイル処理エラー: %s', e.message);
+      }
     }
   });
 
