@@ -7,6 +7,35 @@
 //   3. デプロイ → ウェブアプリとしてデプロイ
 // ============================================================
 
+/**
+ * Google Docs REST API でタブ一覧を取得する（内部関数）
+ * @param {File} file - DriveApp.File オブジェクト
+ * @param {string} previewUrl - ドキュメントのプレビューURL
+ * @return {Array<Object>|null} タブ配列、またはタブが1つ以下なら null
+ * @private
+ */
+function getDocTabs_(file, previewUrl) {
+  try {
+    var token = ScriptApp.getOAuthToken();
+    var res = UrlFetchApp.fetch(
+      'https://docs.googleapis.com/v1/documents/' + encodeURIComponent(file.getId()) + '?fields=tabs.tabProperties',
+      { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+    );
+    if (res.getResponseCode() !== 200) return null;
+    var tabs = JSON.parse(res.getContentText()).tabs || [];
+    if (tabs.length <= 1) return null;
+    return tabs.map(function(t) {
+      var props = t.tabProperties || {};
+      return {
+        title: props.title || 'タブ',
+        url: previewUrl + '?tab=t.' + props.tabId
+      };
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
 /** @const {string} 対象フォルダのID（ここを書き換える） */
 const FOLDER_ID = 'ここにフォルダIDを入れる';
 
@@ -74,20 +103,8 @@ function buildTree_(folder) {
 
       // Googleドキュメントのタブを取得（複数タブがある場合のみ）
       if (entry.fileType === 'doc') {
-        try {
-          const doc = DocumentApp.openById(file.getId());
-          const tabs = doc.getTabs();
-          if (tabs.length > 1) {
-            node.tabs = tabs.map(function(tab) {
-              return {
-                title: tab.getTitle(),
-                url: previewUrl + '?tab=t.' + tab.getId()
-              };
-            });
-          }
-        } catch (e) {
-          // タブ取得失敗時はタブなしで継続
-        }
+        const tabs = getDocTabs_(file, previewUrl);
+        if (tabs) node.tabs = tabs;
       }
 
       fileNodes.push(node);
